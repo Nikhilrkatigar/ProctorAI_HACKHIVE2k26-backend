@@ -33,7 +33,7 @@ def end_exam(req: ExamEndRequest, db=Depends(get_db), user=Depends(get_current_u
         raise HTTPException(status_code=404, detail="Exam not found")
     
     Exam.update_status(db, req.exam_id, "COMPLETED", datetime.now(timezone.utc))
-    return {"exam_id": req.exam_id, "status": "COMPLETED", "report_url": f"/report/{req.exam_id}/pdf"}
+    return {"exam_id": req.exam_id, "status": "COMPLETED"}
 
 
 @router.get("/{exam_id}/status")
