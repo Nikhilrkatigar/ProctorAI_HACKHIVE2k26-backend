@@ -7,7 +7,7 @@ from datetime import datetime
 class LoginRequest(BaseModel):
     email: str
     password: str
-    role: str = "student"   # 'student' | 'proctor'
+    role: Optional[str] = None   # Legacy clients may still send 'student' | 'proctor'
 
 class TokenResponse(BaseModel):
     access_token: str

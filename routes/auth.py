@@ -117,29 +117,30 @@ def seed_demo_users(db):
 def login(req: LoginRequest, db=Depends(get_db)):
     seed_demo_users(db)
 
-    if req.role == "proctor":
-        user = ProctorUser.find_by_email(db, req.email)
-        if not user or not _verify_password(req.password, user.get("password_hash")):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+    identifier = req.email.strip()
+
+    # Proctors sign in with email + password.
+    user = ProctorUser.find_by_email(db, identifier)
+    if user and _verify_password(req.password, user.get("password_hash")):
         token = create_token({"role": "proctor", "name": user.get("name"), "id": str(user.get("_id"))})
-        logger.info("Proctor login: %s", req.email)
+        logger.info("Proctor login: %s", identifier)
         return TokenResponse(access_token=token, role="proctor", name=user.get("name"))
-    else:
-        user = Candidate.find_by_email(db, req.email)
-        if not user or not _verify_password(req.password, user.get("password_hash")):
-            # Auto-create student account for demo ease
-            name = req.email.split("@")[0].title()
-            Candidate.create(db,
-                name=name,
-                email=req.email,
-                password_hash=_hash(req.password),
-            )
-            user = Candidate.find_by_email(db, req.email)
-            logger.info("Auto-created student: %s", req.email)
-        
-        token = create_token({"role": "student", "name": user.get("name"), "id": str(user.get("_id"))})
-        logger.info("Student login: %s", req.email)
+
+    # Students created from the proctor dashboard sign in with student ID + password.
+    user = db.student_accounts.find_one({"studentId": identifier}) or db.student_accounts.find_one({"_id": identifier})
+    if user and _verify_password(req.password, user.get("password_hash")):
+        token = create_token({"role": "student", "name": user.get("name"), "id": user.get("studentId")})
+        logger.info("Student login by ID: %s", identifier)
         return TokenResponse(access_token=token, role="student", name=user.get("name"))
+
+    # Legacy/demo student accounts sign in with email + password.
+    user = Candidate.find_by_email(db, identifier)
+    if user and _verify_password(req.password, user.get("password_hash")):
+        token = create_token({"role": "student", "name": user.get("name"), "id": str(user.get("_id"))})
+        logger.info("Student login by email: %s", identifier)
+        return TokenResponse(access_token=token, role="student", name=user.get("name"))
+
+    raise HTTPException(status_code=401, detail="Invalid ID/email or password")
 
 
 @router.get("/me")

@@ -196,6 +196,31 @@ class ProctorWebSocketManager:
                         self._persist_violation(session, alert)
                     await self._dispatch_alert(session, alert, websocket)
 
+                elif msg_type in {
+                    "FULLSCREEN_EXIT",
+                    "FOCUS_LOST",
+                    "NAVIGATION_ATTEMPT",
+                    "DEVTOOLS_ATTEMPT",
+                    "SCREENSHOT_ATTEMPT",
+                    "RIGHT_CLICK_ATTEMPT",
+                }:
+                    severity = {
+                        "FULLSCREEN_EXIT": "HIGH",
+                        "FOCUS_LOST": "HIGH",
+                        "NAVIGATION_ATTEMPT": "HIGH",
+                        "DEVTOOLS_ATTEMPT": "HIGH",
+                        "SCREENSHOT_ATTEMPT": "HIGH",
+                        "RIGHT_CLICK_ATTEMPT": "LOW",
+                    }.get(msg_type, "MEDIUM")
+                    alert = session.alert_engine.add_alert(
+                        msg_type,
+                        severity,
+                        extra={"detail": msg.get("detail", "")}
+                    )
+                    if alert:
+                        self._persist_violation(session, alert)
+                    await self._dispatch_alert(session, alert, websocket)
+
                 elif msg_type == "CANDIDATE_INFO":
                     session.candidate_name = msg.get("name", candidate_id)
                     session.exam_id = msg.get("exam_id")
