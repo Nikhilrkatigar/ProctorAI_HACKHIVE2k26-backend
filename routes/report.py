@@ -11,6 +11,11 @@ from routes.auth import get_current_user
 router = APIRouter()
 
 
+def require_proctor(user: dict):
+    if user.get("role") != "proctor":
+        raise HTTPException(status_code=403, detail="Reports are available to proctors only")
+
+
 def _build_report_data(exam_doc: dict, violations: list) -> dict:
     start = exam_doc.get('start_time')
     end = exam_doc.get('end_time') or __import__("datetime").datetime.now(timezone.utc)
@@ -67,6 +72,7 @@ def _build_report_data(exam_doc: dict, violations: list) -> dict:
 
 @router.get("/{exam_id}/json")
 def report_json(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+    require_proctor(user)
     exam_doc = db.exams.find_one({"_id": exam_id})
     if not exam_doc:
         raise HTTPException(status_code=404, detail="Exam not found")
@@ -76,6 +82,7 @@ def report_json(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)
 
 @router.get("/{exam_id}/pdf")
 def report_pdf(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+    require_proctor(user)
     exam_doc = db.exams.find_one({"_id": exam_id})
     if not exam_doc:
         raise HTTPException(status_code=404, detail="Exam not found")
