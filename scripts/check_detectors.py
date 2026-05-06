@@ -1,4 +1,8 @@
 import importlib
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 print('Checking detector libraries...')
 
@@ -12,9 +16,9 @@ modules = [
 for mod, name in modules:
     try:
         importlib.import_module(mod)
-        print(f'✓ {name} available ({mod})')
+        print(f'[OK] {name} available ({mod})')
     except Exception as e:
-        print(f'✗ {name} missing or failed to import ({mod}) — {e}')
+        print(f'[FAIL] {name} missing or failed to import ({mod}) - {e}')
 
 # Also check internal availability flags
 print('\nChecking in-project detector availability flags...')

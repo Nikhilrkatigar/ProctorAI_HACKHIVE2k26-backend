@@ -29,12 +29,14 @@ class CandidateSession:
         self.alert_engine = AlertEngine(candidate_id)
         self.last_frame_time = time.time()
         self.gaze_off_center_since: float | None = None
+        self.head_pose_off_center_since: float | None = None
         self.tab_switch_count = 0
         self.exam_id: str | None = None
         self.candidate_name: str = candidate_id
         self.is_active = True
         self.latest_frame_b64: str | None = None  # For live video relay
         self._processing_lock = asyncio.Lock()     # Prevent concurrent frame processing
+        self._condition_counts: dict[str, int] = {}
 
     def to_status_dict(self) -> dict:
         return {
@@ -268,24 +270,47 @@ class ProctorWebSocketManager:
                 person_count = detection["person_count"]
                 phone_detected = detection["phone_detected"]
 
-                if person_count == 0:
-                    alerts.append(session.alert_engine.add_alert("NO_FACE", "HIGH"))
-                elif person_count > 1:
-                    alerts.append(session.alert_engine.add_alert("MULTIPLE_PERSONS", "HIGH"))
+                # Process shared FaceMesh once for face presence, eye tracking and head pose.
+                face_mesh_landmarks = self.shared_facemesh.process(frame)
+                face_count = self.face_detector.count_faces(frame)
+                face_visible = face_mesh_landmarks is not None or face_count > 0
 
-                if phone_detected:
-                    alerts.append(session.alert_engine.add_alert("PHONE_DETECTED", "HIGH"))
+                if not face_visible:
+                    alert = self._stable_alert(session, "NO_FACE", "HIGH", required_frames=3)
+                    if alert:
+                        alerts.append(alert)
+                else:
+                    self._clear_condition(session, "NO_FACE")
+
+                if person_count > 1 or face_count > 1:
+                    alert = self._stable_alert(session, "MULTIPLE_PERSONS", "HIGH", required_frames=2)
+                    if alert:
+                        alerts.append(alert)
+                else:
+                    self._clear_condition(session, "MULTIPLE_PERSONS")
+
+                if phone_detected and person_count > 0:
+                    alert = self._stable_alert(session, "PHONE_DETECTED", "HIGH", required_frames=2)
+                    if alert:
+                        alerts.append(alert)
+                else:
+                    self._clear_condition(session, "PHONE_DETECTED")
 
                 # 2. Face recognition
-                if session.reference_encoding is not None and person_count == 1:
+                if session.reference_encoding is not None and face_visible:
                     face_result = self.face_detector.verify(frame, session.reference_encoding)
                     if face_result == "MISMATCH":
-                        alerts.append(session.alert_engine.add_alert("FACE_MISMATCH", "HIGH"))
+                        alert = self._stable_alert(session, "FACE_MISMATCH", "HIGH", required_frames=2)
+                        if alert:
+                            alerts.append(alert)
                     elif face_result == "NO_FACE":
-                        alerts.append(session.alert_engine.add_alert("NO_FACE", "HIGH"))
-
-                # Process shared FaceMesh once for both eye tracking and head pose
-                self.shared_facemesh.process(frame)
+                        if face_mesh_landmarks is None:
+                            alert = self._stable_alert(session, "NO_FACE", "HIGH", required_frames=3)
+                            if alert:
+                                alerts.append(alert)
+                    else:
+                        self._clear_condition(session, "NO_FACE")
+                        self._clear_condition(session, "FACE_MISMATCH")
 
                 # 3. Eye tracking
                 gaze = self.eye_tracker.get_gaze(frame)
@@ -305,7 +330,13 @@ class ProctorWebSocketManager:
                 if head_result:
                     yaw, pitch, _ = head_result
                     if abs(yaw) > 30 or abs(pitch) > 20:
-                        alerts.append(session.alert_engine.add_alert("HEAD_POSE", "MEDIUM"))
+                        now = time.time()
+                        if session.head_pose_off_center_since is None:
+                            session.head_pose_off_center_since = now
+                        if now - session.head_pose_off_center_since >= 2:
+                            alerts.append(session.alert_engine.add_alert("HEAD_POSE", "MEDIUM"))
+                    else:
+                        session.head_pose_off_center_since = None
 
                 # Score decay
                 session.alert_engine.decay(time.time() - session.last_frame_time)
@@ -329,6 +360,22 @@ class ProctorWebSocketManager:
 
             except Exception as e:
                 logger.error("Frame processing error for %s: %s", session.candidate_id, e, exc_info=True)
+
+    def _stable_alert(
+        self,
+        session: CandidateSession,
+        alert_type: str,
+        severity: str,
+        required_frames: int,
+        extra: dict | None = None,
+    ):
+        session._condition_counts[alert_type] = session._condition_counts.get(alert_type, 0) + 1
+        if session._condition_counts[alert_type] < required_frames:
+            return None
+        return session.alert_engine.add_alert(alert_type, severity, extra=extra)
+
+    def _clear_condition(self, session: CandidateSession, alert_type: str):
+        session._condition_counts.pop(alert_type, None)
 
     async def _dispatch_alert(self, session: CandidateSession, alert: dict, student_ws: WebSocket):
         if not alert:

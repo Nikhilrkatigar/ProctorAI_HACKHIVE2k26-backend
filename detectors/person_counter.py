@@ -19,6 +19,8 @@ _hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 # YOLOv8 COCO class IDs
 PERSON_CLASS = 0
 PHONE_CLASS = 67   # "cell phone" in COCO dataset
+PERSON_CONFIDENCE = 0.45
+PHONE_CONFIDENCE = 0.35
 
 
 class PersonCounter:
@@ -42,24 +44,28 @@ class PersonCounter:
     # ------------------------------------------------------------------
     def _yolo_detect(self, frame: np.ndarray) -> dict:
         """Full detection: persons + phones."""
-        results = _model(frame, classes=[PERSON_CLASS, PHONE_CLASS], verbose=False)
+        results = _model(frame, classes=[PERSON_CLASS, PHONE_CLASS], imgsz=416, verbose=False)
         person_count = 0
         phone_detected = False
         for r in results:
             for box in r.boxes:
                 cls = int(box.cls[0])
-                if cls == PERSON_CLASS:
+                conf = float(box.conf[0]) if box.conf is not None else 0.0
+                if cls == PERSON_CLASS and conf >= PERSON_CONFIDENCE:
                     person_count += 1
-                elif cls == PHONE_CLASS:
+                elif cls == PHONE_CLASS and conf >= PHONE_CONFIDENCE:
                     phone_detected = True
         return {"person_count": person_count, "phone_detected": phone_detected}
 
     # ------------------------------------------------------------------
     def _yolo_count(self, frame: np.ndarray) -> int:
-        results = _model(frame, classes=[PERSON_CLASS], verbose=False)
+        results = _model(frame, classes=[PERSON_CLASS], imgsz=416, verbose=False)
         count = 0
         for r in results:
-            count += len(r.boxes)
+            for box in r.boxes:
+                conf = float(box.conf[0]) if box.conf is not None else 0.0
+                if conf >= PERSON_CONFIDENCE:
+                    count += 1
         return count
 
     # ------------------------------------------------------------------

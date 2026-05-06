@@ -19,6 +19,8 @@ RIGHT_IRIS      = 473
 
 LEFT_EYE_TOP    = 159
 LEFT_EYE_BOTTOM = 145
+RIGHT_EYE_TOP = 386
+RIGHT_EYE_BOTTOM = 374
 
 class EyeTracker:
     def __init__(self, shared_facemesh=None):
@@ -63,34 +65,41 @@ class EyeTracker:
             l = lm[idx]
             return np.array([l.x * w, l.y * h])
 
-        # --- Horizontal gaze (left iris relative to eye corners) ---
         try:
-            left_inner  = pt(LEFT_EYE_INNER)
-            left_outer  = pt(LEFT_EYE_OUTER)
-            left_iris   = pt(LEFT_IRIS)
+            left_ratio_h = self._horizontal_ratio(pt(LEFT_IRIS), pt(LEFT_EYE_OUTER), pt(LEFT_EYE_INNER))
+            right_ratio_h = self._horizontal_ratio(pt(RIGHT_IRIS), pt(RIGHT_EYE_INNER), pt(RIGHT_EYE_OUTER))
+            ratio_h = float(np.mean([left_ratio_h, right_ratio_h]))
 
-            eye_width = np.linalg.norm(left_inner - left_outer)
-            if eye_width < 1:
-                return "CENTER"
+            left_ratio_v = self._vertical_ratio(pt(LEFT_IRIS), pt(LEFT_EYE_TOP), pt(LEFT_EYE_BOTTOM))
+            right_ratio_v = self._vertical_ratio(pt(RIGHT_IRIS), pt(RIGHT_EYE_TOP), pt(RIGHT_EYE_BOTTOM))
+            ratio_v = float(np.mean([left_ratio_v, right_ratio_v]))
 
-            ratio_h = (left_iris[0] - left_outer[0]) / eye_width
-
-            # --- Vertical gaze ---
-            left_top    = pt(LEFT_EYE_TOP)
-            left_bottom = pt(LEFT_EYE_BOTTOM)
-            eye_height  = np.linalg.norm(left_top - left_bottom)
-            ratio_v     = (left_iris[1] - left_top[1]) / (eye_height + 1e-6)
-
-            if ratio_h < 0.35:
-                return "RIGHT"   # iris moved toward outer = looking right
-            elif ratio_h > 0.65:
+            if ratio_h < 0.28:
+                return "RIGHT"
+            elif ratio_h > 0.72:
                 return "LEFT"
-            elif ratio_v < 0.3:
+            elif ratio_v < 0.22:
                 return "UP"
+            elif ratio_v > 0.82:
+                return "DOWN"
             else:
                 return "CENTER"
         except (IndexError, Exception):
             return "CENTER"
+
+    @staticmethod
+    def _horizontal_ratio(iris: np.ndarray, outer: np.ndarray, inner: np.ndarray) -> float:
+        eye_width = np.linalg.norm(inner - outer)
+        if eye_width < 1:
+            return 0.5
+        return (iris[0] - outer[0]) / eye_width
+
+    @staticmethod
+    def _vertical_ratio(iris: np.ndarray, top: np.ndarray, bottom: np.ndarray) -> float:
+        eye_height = np.linalg.norm(top - bottom)
+        if eye_height < 1:
+            return 0.5
+        return (iris[1] - top[1]) / eye_height
 
     def _fallback_gaze(self, frame: np.ndarray) -> str:
         """Simple fallback using Haar eye detector if mediapipe unavailable."""
