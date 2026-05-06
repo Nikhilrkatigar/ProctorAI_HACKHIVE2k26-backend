@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.env.local
+proctorAI.db
+backend/proctorAI.db
+static/reports/
+static/snapshots/
+backend/static/reports/
+backend/static/snapshots/
+
+# YOLO weights are re-downloaded automatically.
+*.pt
+stderr.txt
+stdout.txt
+backend/stderr.txt
+backend/stdout.txt
+
+# Node
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
