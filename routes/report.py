@@ -1,12 +1,13 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import FileResponse
 from datetime import timezone
 from bson import ObjectId
 
 from models.database import get_db, Exam, Violation
 from utils.pdf_report import generate_pdf
-from routes.auth import get_current_user
+from routes.auth import get_current_user, verify_token
 
 router = APIRouter()
 
@@ -71,7 +72,20 @@ def _build_report_data(exam_doc: dict, violations: list) -> dict:
 
 
 @router.get("/{exam_id}/json")
-def report_json(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+def report_json(
+    exam_id: str,
+    db=Depends(get_db),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    # Support Authorization header or fallback to ?token=...
+    auth_value = authorization or token
+    if not auth_value:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    token_val = auth_value.replace("Bearer ", "").strip()
+    user = verify_token(token_val)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     require_proctor(user)
     exam_doc = db.exams.find_one({"_id": exam_id})
     if not exam_doc:
@@ -81,7 +95,20 @@ def report_json(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)
 
 
 @router.get("/{exam_id}/pdf")
-def report_pdf(exam_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+def report_pdf(
+    exam_id: str,
+    db=Depends(get_db),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+):
+    # Support Authorization header or fallback to ?token=...
+    auth_value = authorization or token
+    if not auth_value:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    token_val = auth_value.replace("Bearer ", "").strip()
+    user = verify_token(token_val)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     require_proctor(user)
     exam_doc = db.exams.find_one({"_id": exam_id})
     if not exam_doc:

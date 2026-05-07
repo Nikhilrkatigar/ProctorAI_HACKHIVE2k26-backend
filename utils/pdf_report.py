@@ -1,6 +1,9 @@
 import os
 from datetime import datetime, timezone
 
+# Absolute path to the backend root so snapshot lookups work regardless of CWD
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
@@ -16,7 +19,7 @@ try:
 except ImportError:
     REPORTLAB_AVAILABLE = False
 
-REPORTS_DIR = "static/reports"
+REPORTS_DIR = os.path.join(_BACKEND_DIR, "static", "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 SEVERITY_COLORS = {
@@ -137,9 +140,11 @@ def generate_pdf(data: dict) -> str:
         story.append(Paragraph("Violation Snapshots", styles["Heading2"]))
         for v in snap_violations[:6]:
             snap_path = v["snapshot_path"]
-            if isinstance(snap_path, str) and snap_path.startswith("/static/"):
+            if isinstance(snap_path, str):
+                # Strip leading slash then resolve absolute path from backend root
                 snap_path = snap_path.lstrip("/")
-            if os.path.exists(snap_path):
+                snap_path = os.path.join(_BACKEND_DIR, snap_path)
+            if snap_path and os.path.exists(snap_path):
                 try:
                     img = RLImage(snap_path, width=6*cm, height=4.5*cm)
                     story.append(img)

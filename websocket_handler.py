@@ -20,6 +20,8 @@ from models import schemas
 
 logger = logging.getLogger("proctorAI.ws")
 
+ANALYSIS_MAX_WIDTH = 640
+
 
 class CandidateSession:
     def __init__(self, candidate_id: str):
@@ -169,8 +171,8 @@ class ProctorWebSocketManager:
                         self._persist_violation(session, alert)
                     await self._dispatch_alert(session, alert, websocket)
 
-                elif msg_type == "CLIPBOARD_VIOLATION":
-                    alert = session.alert_engine.add_alert("CLIPBOARD_VIOLATION", "LOW")
+                elif msg_type in {"CLIPBOARD_VIOLATION", "CLIPBOARD_ATTEMPT"}:
+                    alert = session.alert_engine.add_alert("CLIPBOARD_ATTEMPT", "LOW")
                     if alert:
                         self._persist_violation(session, alert)
                     await self._dispatch_alert(session, alert, websocket)
@@ -199,18 +201,26 @@ class ProctorWebSocketManager:
                 elif msg_type in {
                     "FULLSCREEN_EXIT",
                     "FOCUS_LOST",
+                    "WINDOW_BLUR",
                     "NAVIGATION_ATTEMPT",
                     "DEVTOOLS_ATTEMPT",
                     "SCREENSHOT_ATTEMPT",
                     "RIGHT_CLICK_ATTEMPT",
+                    "CONTEXT_MENU_ATTEMPT",
+                    "NEW_TAB_ATTEMPT",
+                    "REFRESH_ATTEMPT",
                 }:
                     severity = {
-                        "FULLSCREEN_EXIT": "HIGH",
-                        "FOCUS_LOST": "HIGH",
-                        "NAVIGATION_ATTEMPT": "HIGH",
-                        "DEVTOOLS_ATTEMPT": "HIGH",
-                        "SCREENSHOT_ATTEMPT": "HIGH",
-                        "RIGHT_CLICK_ATTEMPT": "LOW",
+                        "FULLSCREEN_EXIT":      "HIGH",
+                        "FOCUS_LOST":           "HIGH",
+                        "WINDOW_BLUR":          "HIGH",
+                        "NAVIGATION_ATTEMPT":   "HIGH",
+                        "DEVTOOLS_ATTEMPT":     "HIGH",
+                        "SCREENSHOT_ATTEMPT":   "HIGH",
+                        "NEW_TAB_ATTEMPT":      "MEDIUM",
+                        "REFRESH_ATTEMPT":      "MEDIUM",
+                        "RIGHT_CLICK_ATTEMPT":  "LOW",
+                        "CONTEXT_MENU_ATTEMPT": "LOW",
                     }.get(msg_type, "MEDIUM")
                     alert = session.alert_engine.add_alert(
                         msg_type,
@@ -271,6 +281,8 @@ class ProctorWebSocketManager:
                 if frame is None:
                     return
 
+                analysis_frame = self._make_analysis_frame(frame)
+
                 # Store downscaled frame for live relay to proctors
                 h, w = frame.shape[:2]
                 if w > 320:
@@ -291,13 +303,13 @@ class ProctorWebSocketManager:
                 alerts = []
 
                 # 1. Person + phone detection (YOLOv8)
-                detection = self.person_counter.detect_objects(frame)
+                detection = self.person_counter.detect_objects(analysis_frame)
                 person_count = detection["person_count"]
                 phone_detected = detection["phone_detected"]
 
                 # Process shared FaceMesh once for face presence, eye tracking and head pose.
-                face_mesh_landmarks = self.shared_facemesh.process(frame)
-                face_count = self.face_detector.count_faces(frame)
+                face_mesh_landmarks = self.shared_facemesh.process(analysis_frame)
+                face_count = 0 if face_mesh_landmarks is not None else self.face_detector.count_faces(analysis_frame)
                 face_visible = face_mesh_landmarks is not None or face_count > 0
 
                 if not face_visible:
@@ -323,35 +335,34 @@ class ProctorWebSocketManager:
 
                 # 2. Face recognition
                 if session.reference_encoding is not None and face_visible:
-                    face_result = self.face_detector.verify(frame, session.reference_encoding)
+                    face_result = self.face_detector.verify(analysis_frame, session.reference_encoding)
                     if face_result == "MISMATCH":
                         alert = self._stable_alert(session, "FACE_MISMATCH", "HIGH", required_frames=2)
                         if alert:
                             alerts.append(alert)
                     elif face_result == "NO_FACE":
-                        if face_mesh_landmarks is None:
-                            alert = self._stable_alert(session, "NO_FACE", "HIGH", required_frames=3)
-                            if alert:
-                                alerts.append(alert)
+                        alert = self._stable_alert(session, "NO_FACE", "HIGH", required_frames=3)
+                        if alert:
+                            alerts.append(alert)
                     else:
                         self._clear_condition(session, "NO_FACE")
                         self._clear_condition(session, "FACE_MISMATCH")
 
                 # 3. Eye tracking
-                gaze = self.eye_tracker.get_gaze(frame)
+                gaze = self.eye_tracker.get_gaze(analysis_frame)
                 if gaze and gaze != "CENTER":
                     now = time.time()
                     if session.gaze_off_center_since is None:
                         session.gaze_off_center_since = now
                     elapsed = now - session.gaze_off_center_since
                     if elapsed >= 3:
-                        sev = "MEDIUM" if elapsed >= 5 else "LOW"
+                        sev = "HIGH" if elapsed >= 5 else "MEDIUM"
                         alerts.append(session.alert_engine.add_alert(f"GAZE_{gaze}", sev))
                 else:
                     session.gaze_off_center_since = None
 
                 # 4. Head pose
-                head_result = self.head_pose.estimate(frame)
+                head_result = self.head_pose.estimate(analysis_frame)
                 if head_result:
                     yaw, pitch, _ = head_result
                     if abs(yaw) > 30 or abs(pitch) > 20:
@@ -359,7 +370,7 @@ class ProctorWebSocketManager:
                         if session.head_pose_off_center_since is None:
                             session.head_pose_off_center_since = now
                         if now - session.head_pose_off_center_since >= 2:
-                            alerts.append(session.alert_engine.add_alert("HEAD_POSE", "MEDIUM"))
+                            alerts.append(session.alert_engine.add_alert("HEAD_POSE", "HIGH"))
                     else:
                         session.head_pose_off_center_since = None
 
@@ -385,6 +396,16 @@ class ProctorWebSocketManager:
 
             except Exception as e:
                 logger.error("Frame processing error for %s: %s", session.candidate_id, e, exc_info=True)
+
+    @staticmethod
+    def _make_analysis_frame(frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        if w <= ANALYSIS_MAX_WIDTH:
+            return frame
+
+        scale = ANALYSIS_MAX_WIDTH / w
+        new_size = (ANALYSIS_MAX_WIDTH, max(1, int(h * scale)))
+        return cv2.resize(frame, new_size)
 
     def _stable_alert(
         self,

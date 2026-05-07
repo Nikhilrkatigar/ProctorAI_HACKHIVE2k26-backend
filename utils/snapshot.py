@@ -3,7 +3,8 @@ import time
 import numpy as np
 import cv2
 
-SNAPSHOT_DIR = "static/snapshots"
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SNAPSHOT_DIR = os.path.join(_BACKEND_DIR, "static", "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 
